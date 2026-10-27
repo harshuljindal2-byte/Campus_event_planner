@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Campus Event Planner · DA-IICT</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#1b2140;--mute:#5d6483;--line:#dde1ee;--bg:#f3f5fb;--card:#fff;--accent:#e8590c;
+--go:#1f8a5b;--prec:#9a6b00;--risky:#c2540a;--resch:#b83232}
+*{box-sizing:border-box}
+body{margin:0;font-family:'Bricolage Grotesque',system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.5}
+main{max-width:760px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:2rem;font-weight:800;margin:8px 0 4px;letter-spacing:-.02em}
+h2{font-size:1.1rem;margin:0 0 10px}
+p.sub{color:var(--mute);margin:0 0 20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+.types{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.type{border:2px solid var(--line);border-radius:12px;padding:12px 6px;text-align:center;background:#fff;cursor:pointer;font:inherit;color:inherit}
+.type .ic{font-size:1.8rem;display:block}
+.type[aria-pressed=true]{border-color:var(--accent);background:#fff4ec}
+.row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+label{font-size:.85rem;color:var(--mute);display:block;margin-bottom:4px}
+input,select{width:100%;padding:9px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff}
+button.go{width:100%;margin-top:16px;padding:13px;border:0;border-radius:10px;background:var(--accent);color:#fff;font:inherit;font-weight:600;font-size:1.05rem;cursor:pointer}
+button.go:disabled{opacity:.6}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #6a8dff;outline-offset:2px}
+.verdict{color:#fff;border:0}
+.verdict .big{font-size:2rem;font-weight:800;line-height:1.1}
+.verdict .sc{float:right;font-size:2.4rem;font-weight:800}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.chip{background:rgba(255,255,255,.2);padding:6px 10px;border-radius:99px;font-size:.9rem}
+.best{border-left:6px solid var(--go)}
+.strip{display:grid;grid-template-columns:repeat(18,1fr);gap:3px;margin-top:8px}
+.cell{height:44px;border-radius:5px;font-size:.62rem;color:#fff;display:flex;align-items:flex-end;justify-content:center;padding-bottom:2px;position:relative}
+.cell.inwin{outline:3px solid var(--ink);outline-offset:1px;z-index:1}
+.cell.sun::after{content:'🌇';position:absolute;top:2px;font-size:.8rem}
+.legend{font-size:.8rem;color:var(--mute);margin-top:8px}
+ul.check{list-style:none;padding:0;margin:0}
+ul.check li{padding:8px 0;border-bottom:1px solid var(--line)}
+ul.check label{display:flex;gap:10px;color:var(--ink);font-size:1rem;margin:0}
+ul.check input{width:auto}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.stat{background:var(--bg);border-radius:10px;padding:10px}
+.stat b{display:block;font-size:1.2rem}
+.note{color:var(--mute);font-size:.88rem}
+.btns{display:flex;gap:10px;flex-wrap:wrap}
+.btns button,.btns a{padding:10px 14px;border-radius:9px;border:1px solid var(--ink);background:#fff;font:inherit;cursor:pointer;text-decoration:none;color:var(--ink)}
+.warn{background:#fff6dd;border:1px solid #ecd48a;padding:10px;border-radius:10px;margin-bottom:12px;font-size:.92rem}
+@media(max-width:520px){.row{grid-template-columns:1fr 1fr}.strip{grid-template-columns:repeat(9,1fr)}}
+</style>
+</head>
+<body>
+<main>
+<h1>Campus Event Planner</h1>
+<p class="sub">Check weather, air quality and sunset for an outdoor event at DA-IICT, Gandhinagar.</p>
+
+<section class="card">
+  <h2>1. What kind of event?</h2>
+  <div class="types" id="types"></div>
+  <div class="row">
+    <div><label for="date">Date</label><input type="date" id="date"></div>
+    <div><label for="start">Starts</label><select id="start"></select></div>
+    <div><label for="end">Ends</label><select id="end"></select></div>
+  </div>
+  <div style="margin-top:14px">
+    <label for="key">OpenAQ API key (optional, enables air quality)</label>
+    <input type="password" id="key" placeholder="Paste your key here">
+  </div>
+  <button class="go" id="run">Check conditions</button>
+</section>
+
+<div id="out"></div>
+</main>
+
+<script>
+// ---------- SETTINGS (DA-IICT campus) ----------
+const LAT = 23.1888, LON = 72.6285;
+
+// ---------- EVENT TYPES: how much each risk matters (weights add up to 1) ----------
+const EVENTS = {
+  sports:   {label:'Sports day',     icon:'🏏', w:{rain:.25, heat:.35, aqi:.30, wind:.10}},
+  cultural: {label:'Cultural night', icon:'🎤', w:{rain:.45, heat:.10, aqi:.10, wind:.35}},
+  tech:     {label:'Tech meetup',    icon:'💻', w:{rain:.40, heat:.20, aqi:.20, wind:.20}}
+};
+let chosen = 'cultural';
+
+const clamp = x => Math.max(0, Math.min(100, x));
+const fmtH = h => (h % 12 || 12) + (h < 12 || h === 24 ? ' AM' : ' PM');
+
+// ---------- SETUP FORM ----------
+const typesEl = document.getElementById('types');
+Object.entries(EVENTS).forEach(([id, e]) => {
+  const b = document.createElement('button');
+  b.className = 'type'; b.type = 'button';
+  b.innerHTML = `<span class="ic">${e.icon}</span>${e.label}`;
+  b.setAttribute('aria-pressed', id === chosen);
+  b.onclick = () => { chosen = id; [...typesEl.children].forEach(c => c.setAttribute('aria-pressed', c === b)); };
+  typesEl.appendChild(b);
+});
+const startEl = document.getElementById('start'), endEl = document.getElementById('end'), dateEl = document.getElementById('date');
+for (let h = 6; h <= 23; h++) startEl.add(new Option(fmtH(h), h));
+for (let h = 7; h <= 24; h++) endEl.add(new Option(fmtH(h), h));
+startEl.value = 17; endEl.value = 21;
+const today = new Date(), tmr = new Date(today.getTime() + 86400000), max = new Date(today.getTime() + 15 * 86400000);
+const iso = d => d.toLocaleDateString('en-CA');
+dateEl.value = iso(tmr); dateEl.min = iso(today); dateEl.max = iso(max);
+try { document.getElementById('key').value = localStorage.getItem('oaqkey') || ''; } catch (e) {}
+
+// ---------- API 1: Open-Meteo (hourly weather) ----------
+async function getWeather(date) {
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
+    `&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,wind_speed_10m` +
+    `&timezone=Asia%2FKolkata&start_date=${date}&end_date=${date}`;
+  const j = await (await fetch(url)).json();
+  if (!j.hourly) throw new Error('Weather data not available for this date.');
+  const H = j.hourly;
+  return H.time.map((t, i) => ({
+    hour: +t.slice(11, 13), temp: H.temperature_2m[i], feels: H.apparent_temperature[i],
+    hum: H.relative_humidity_2m[i], pop: H.precipitation_probability[i] ?? 0, wind: H.wind_speed_10m[i]
+  }));
+}
+
+// ---------- API 2: Sunrise-Sunset ----------
+async function getSun(date) {
+  const j = await (await fetch(`https://api.sunrise-sunset.org/json?lat=${LAT}&lng=${LON}&date=${date}&formatted=0`)).json();
+  const r = j.results, toIST = s => {
+    const p = new Date(s).toLocaleTimeString('en-GB', {timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit', hour12:false});
+    const [h, m] = p.split(':').map(Number); return h * 60 + m;
+  };
+  return {sunset: toIST(r.sunset), civilEnd: toIST(r.civil_twilight_end), sunrise: toIST(r.sunrise)};
+}
+const fmtMin = m => { const h = Math.floor(m / 60), mm = String(m % 60).padStart(2, '0'); return `${h % 12 || 12}:${mm} ${h < 12 ? 'AM' : 'PM'}`; };
+
+// ---------- API 3: OpenAQ (PM2.5 from nearest station) ----------
+async function getPM25(key) {
+  if (!key) return null;
+  const opt = {headers: {'X-API-Key': key}};
+  const j = await (await fetch(`https://api.openaq.org/v3/locations?coordinates=${LAT},${LON}&radius=25000&limit=10`, opt)).json();
+  for (const loc of (j.results || [])) {
+    const s = (loc.sensors || []).find(s => s.parameter && s.parameter.name === 'pm25');
+    if (!s) continue;
+    const l = await (await fetch(`https://api.openaq.org/v3/locations/${loc.id}/latest`, opt)).json();
+    const v = (l.results || []).find(x => x.sensorsId === s.id);
+    if (v) return {value: v.value, station: loc.name};
+  }
+  return null;
+}
+
+// ---------- SCORING ENGINE ----------
+// Each risk is 0 (no problem) to 100 (serious problem)
+function risks(h, pm) {
+  return {
+    rain: clamp(h.pop),
+    heat: clamp((h.feels - 30) / 12 * 100),
+    wind: clamp((h.wind - 15) / 30 * 100),
+    aqi:  pm == null ? null : clamp((pm - 30) / 120 * 100)
+  };
+}
+function weights(type, hasAqi) {
+  const w = {...EVENTS[type].w};
+  if (!hasAqi) delete w.aqi;
+  const total = Object.values(w).reduce((a, b) => a + b, 0);
+  Object.keys(w).forEach(k => w[k] /= total);
+  return w;
+}
+function hourScore(r, w) { return 100 - Object.keys(w).reduce((s, k) => s + w[k] * r[k], 0); }
+const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+function verdict(s) {
+  if (s >= 80) return {t:'Go', c:'var(--go)'};
+  if (s >= 60) return {t:'Go with precautions', c:'var(--prec)'};
+  if (s >= 40) return {t:'Risky', c:'var(--risky)'};
+  return {t:'Reschedule', c:'var(--resch)'};
+}
+
+// ---------- MAIN ----------
+document.getElementById('run').onclick = async function () {
+  const btn = this, out = document.getElementById('out');
+  const date = dateEl.value, s = +startEl.value, e = +endEl.value, key = document.getElementById('key').value.trim();
+  if (!date) { out.innerHTML = '<div class="warn">Pick a date first.</div>'; return; }
+  if (e <= s) { out.innerHTML = '<div class="warn">The end time must be after the start time.</div>'; return; }
+  try { localStorage.setItem('oaqkey', key); } catch (x) {}
+  btn.disabled = true; btn.textContent = 'Checking…'; out.innerHTML = '';
+  const [wr, sr, ar] = await Promise.allSettled([getWeather(date), getSun(date), getPM25(key)]);
+  btn.disabled = false; btn.textContent = 'Check conditions';
+  if (wr.status !== 'fulfilled') {
+    out.innerHTML = `<div class="warn">Could not load the forecast. Forecasts cover the next 15 days, so check the date and your internet connection.</div>`; return;
+  }
+  const notes = [];
+  const sun = sr.status === 'fulfilled' ? sr.value : null;
+  if (!sun) notes.push('Sunset times unavailable, so the lighting plan is skipped.');
+  const aq = ar.status === 'fulfilled' ? ar.value : null;
+  if (!key) notes.push('No OpenAQ key entered, so air quality is not included in the score.');
+  else if (!aq) notes.push('No recent PM2.5 reading found near campus (or the key is invalid), so air quality is not included.');
+  const pm = aq ? aq.value : null;
+  const w = weights(chosen, pm != null);
+
+  const hours = wr.value.filter(h => h.hour >= 6 && h.hour <= 23).map(h => {
+    const r = risks(h, pm); return {...h, r, score: hourScore(r, w)};
+  });
+  const win = hours.filter(h => h.hour >= s && h.hour < e);
+  const score = Math.round(avg(win.map(h => h.score)));
+  const v = verdict(score);
+
+  // best slot of the same length on this day
+  const dur = e - s; let best = {s, sc: score};
+  for (let st = 6; st + dur <= 24; st++) {
+    const sl = hours.filter(h => h.hour >= st && h.hour < st + dur);
+    if (sl.length === dur) { const sc = Math.round(avg(sl.map(h => h.score))); if (sc > best.sc) best = {s: st, sc}; }
+  }
+
+  // reasons = biggest contributors to lost points in your window
+  const mx = k => Math.max(...win.map(h => h[k]));
+  const text = {
+    rain: () => `Rain chance up to ${mx('pop')}%`,
+    heat: () => `Feels like up to ${Math.round(mx('feels'))}°C`,
+    wind: () => `Wind up to ${Math.round(mx('wind'))} km/h`,
+    aqi:  () => `PM2.5 is ${Math.round(pm)} µg/m³`
+  };
+  const reasons = Object.keys(w).map(k => ({k, loss: w[k] * avg(win.map(h => h.r[k]))}))
+    .sort((a, b) => b.loss - a.loss).filter(x => x.loss >= 3).slice(0, 3).map(x => text[x.k]());
+  if (!reasons.length) reasons.push('Weather and air look comfortable');
+
+  // checklist
+  const todo = [];
+  if (mx('pop') >= 40) todo.push('Arrange a tent or cover, and book an indoor Plan B (auditorium or LT)');
+  else if (mx('pop') >= 20) todo.push('Keep umbrellas and covers ready for sound and electrical equipment');
+  if (mx('feels') >= 35) todo.push('Set up water stations, shade and a first-aid kit');
+  if (pm != null && pm > 100) todo.push('Keep masks available and avoid intense exercise events');
+  if (mx('wind') >= 25) todo.push('Secure banners, flex boards and stage decoration');
+  if (sun && e * 60 > sun.sunset - 30) todo.push(`Lighting crew ready by ${fmtMin(Math.max(sun.sunset - 45, 0))}`);
+  todo.push('Inform the faculty coordinator and security', 'Share the final plan in the WhatsApp group');
+
+  const better = best.s !== s && best.sc >= score + 5;
+  const pretty = new Date(date + 'T00:00').toLocaleDateString('en-IN', {weekday:'long', day:'numeric', month:'long'});
+  const summary = `${EVENTS[chosen].label} at DA-IICT, ${pretty}, ${fmtH(s)}-${fmtH(e)}\nVerdict: ${v.t} (score ${score}/100)\n` +
+    reasons.map(r => '- ' + r).join('\n') + (sun ? `\nSunset: ${fmtMin(sun.sunset)}` : '') +
+    (better ? `\nBetter slot: ${fmtH(best.s)}-${fmtH(best.s + dur)} (score ${best.sc})` : '');
+
+  out.innerHTML = `
+  ${notes.map(n => `<div class="warn">${n}</div>`).join('')}
+  <section class="card verdict" style="background:${v.c}">
+    <span class="sc">${score}</span>
+    <div class="big">${v.t}</div>
+    <div>${EVENTS[chosen].label}, ${pretty}, ${fmtH(s)} to ${fmtH(e)}</div>
+    <div class="chips">${reasons.map(r => `<span class="chip">${r}</span>`).join('')}</div>
+  </section>
+  ${better ? `<section class="card best"><h2>Better slot available</h2>
+    <b>${fmtH(best.s)} to ${fmtH(best.s + dur)}</b> scores <b>${best.sc}</b> against ${score} for your slot.</section>` :
+    `<section class="card best"><h2>Your slot is already the best on this day</h2>
+    <span class="note">No same-length slot between 6 AM and midnight scores noticeably higher.</span></section>`}
+  <section class="card"><h2>Hour by hour</h2>
+    <div class="strip">${hours.map(h => {
+      const c = verdict(h.score).c, isSun = sun && Math.floor(sun.sunset / 60) === h.hour;
+      return `<div class="cell${h.hour >= s && h.hour < e ? ' inwin' : ''}${isSun ? ' sun' : ''}" style="background:${c}" title="${fmtH(h.hour)}: score ${Math.round(h.score)}">${h.hour}</div>`;
+    }).join('')}</div>
+    <div class="legend">Hours 6 to 23. Dark outline = your event. 🌇 = sunset hour. Green is good, red is bad.</div>
+  </section>
+  <section class="card"><h2>Conditions during your event</h2>
+    <div class="stats">
+      <div class="stat"><b>${Math.round(mx('pop'))}%</b>max rain chance</div>
+      <div class="stat"><b>${Math.round(mx('feels'))}°C</b>max feels-like</div>
+      <div class="stat"><b>${Math.round(mx('wind'))} km/h</b>max wind</div>
+      <div class="stat"><b>${pm != null ? Math.round(pm) : 'n/a'}</b>PM2.5 µg/m³${aq ? '<br><span class="note">' + aq.station + '</span>' : ''}</div>
+      ${sun ? `<div class="stat"><b>${fmtMin(sun.sunset)}</b>sunset<br><span class="note">dark by ${fmtMin(sun.civilEnd)}</span></div>` : ''}
+    </div>
+    ${pm != null ? '<p class="note">PM2.5 is the latest reading, used for every hour of the day.</p>' : ''}
+  </section>
+  <section class="card"><h2>Preparation checklist</h2>
+    <ul class="check">${todo.map(t => `<li><label><input type="checkbox"> ${t}</label></li>`).join('')}</ul>
+  </section>
+  <section class="card"><h2>Share</h2><div class="btns">
+    <button id="copy">Copy summary</button>
+    <a target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(summary)}">Send on WhatsApp</a>
+  </div></section>`;
+  document.getElementById('copy').onclick = async function () {
+    try { await navigator.clipboard.writeText(summary); this.textContent = 'Copied'; } catch (x) { this.textContent = 'Copy failed'; }
+  };
+  out.scrollIntoView({behavior: 'smooth'});
+};
+</script>
+</body>
+</html>
